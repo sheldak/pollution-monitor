@@ -27,6 +27,13 @@ init(InitialMonitor) ->
                     restart => permanent,
                     shutdown => 2000,
                     type => worker,
-                    modules => [pollution_gen_server]}],
+                    modules => [pollution_gen_server]},
+
+                  #{id => 'pow',
+                    start => {pow, start_link, []},
+                    restart => permanent,
+                    shutdown => 2000,
+                    type => worker,
+                    modules => [pow]}],
 
     {ok, {SupFlags, ChildSpecs}}.
