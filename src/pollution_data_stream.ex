@@ -1,17 +1,15 @@
-defmodule PollutionData do
+defmodule PollutionDataStream do
   @moduledoc """
-  Loading data from file to the pollution server using Enum.
+  Loading data from file to the pollution server using Stream.
   """
 
   @doc """
-  Gets lines from CSV file as list.
+  Gets lines from CSV file as stream.
 
-  Returns list.
+  Returns stream.
   """
   def import_lines_from_CSV do
-    lines = File.read!("pollution.csv")
-            |> String.split("\r\n")
-    lines
+    File.stream!("pollution.csv")
   end
 
   @doc """
@@ -48,14 +46,22 @@ defmodule PollutionData do
   end
 
   @doc """
-  Gets unique stations from `measurements` (list of maps).
+  Extracts all unique stations from `stream`.
 
-  Returns list of unique locations of stations.
+  Returns stream of tuples {x, y} where x and y are coordinates of a station.
   """
-  def identify_stations(measurements) do
-    stations = measurements
-               |> Enum.map(fn measurement -> measurement.location end)
-               |> Enum.uniq()
+  def get_stations(stream) do
+    stations_coords = stream
+                      |> Stream.flat_map(&(String.split(&1, ",")))
+                      |> Stream.map(&Float.parse/1)
+                      |> Stream.filter(&(elem(&1, 1) == ""))
+                      |> Stream.map(fn {x, _} -> x end)
+
+    first_coordinate = Stream.take_every(stations_coords, 2)
+    second_coordinate = Stream.drop_every(stations_coords, 2)
+
+    stations = Stream.zip(first_coordinate, second_coordinate)
+               |> Stream.uniq()
 
     stations
   end
@@ -70,7 +76,7 @@ defmodule PollutionData do
   end
 
   @doc """
-  Adds given `stations` (list of tuples representing locations) to the pollution server.
+  Adds given `stations` (stream of tuples representing locations) to the pollution server.
   """
   def add_stations(stations) do
     add_station_fn = fn station -> :pollution_gen_server.addStation(generate_station_name(station), station) end
@@ -79,23 +85,23 @@ defmodule PollutionData do
   end
 
   @doc """
-  Adds given `measurements` (list of maps) to the pollution server.
+  Adds given `measurements` (stream of maps) to the pollution server.
   """
   def add_measurements(measurements) do
     add_measurement_fn = fn measurement -> :pollution_gen_server.
-                          addValue(measurement.location, measurement.datetime, "PM10", measurement.pollution_level) end
+                           addValue(measurement.location, measurement.datetime, "PM10", measurement.pollution_level) end
 
     Enum.each(measurements, add_measurement_fn)
   end
 
   @doc """
-  Main function which gets list of lines from the file and saves all measurements to the pollution server.
-  Function prints time needed to load stations, load measurements, get station mean and get daily mean.
+  Main function which gets stream from the file and saves all measurements to the pollution server.
+  Function prints time needed to load stations and measurements to the pollution server.
   """
   def add_measurements_from_file do
-    measurements = import_lines_from_CSV()
-            |> Enum.map(&parse_line/1)
-    stations = identify_stations(measurements)
+    stream = import_lines_from_CSV()
+    stations = get_stations stream
+    measurements = Stream.map(stream, &parse_line/1)
 
     :pollution_sup.start_link()
     add_stations_time = fn -> add_stations(stations) end
@@ -108,23 +114,8 @@ defmodule PollutionData do
                             |> elem(0)
                             |> Kernel./(1_000_000)
 
-    example_station = {20.06, 49.986}
-    example_day = {2017, 5, 3}
-
-    get_station_mean_time = fn -> :pollution_gen_server.getStationMean(example_station, "PM10") end
-                            |> :timer.tc
-                            |> elem(0)
-                            |> Kernel./(1_000_000)
-
-    get_daily_mean_time = fn -> :pollution_gen_server.getDailyMean(example_day, "PM10") end
-                            |> :timer.tc
-                            |> elem(0)
-                            |> Kernel./(1_000_000)
-
     :timer.sleep(200);
     IO.puts "Time of adding stations: #{add_stations_time}"
     IO.puts "Time of adding measurements: #{add_measurements_time}"
-    IO.puts "Time of getting station mean: #{get_station_mean_time}"
-    IO.puts "Time of getting daily mean: #{get_daily_mean_time}"
   end
 end
